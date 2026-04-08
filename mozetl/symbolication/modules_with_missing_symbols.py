@@ -230,7 +230,7 @@ body += "</pre>"
 client = boto3.client("ses", region_name="us-west-2")
 
 client.send_email(
-    Source="mcastelluccio@data.mozaws.net",
+    Source="telemetry-alerts@mozilla.com",
     Destination={
         "ToAddresses": [
             "mcastelluccio@mozilla.com",

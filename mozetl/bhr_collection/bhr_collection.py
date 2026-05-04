@@ -549,8 +549,9 @@ def get_data(sc, sql_context, config, date, end_date=None):
         .option("query", sql)
         .option("viewsEnabled", True)
         # sql results need to be saved to a table
-        .option("materializationProject", "moz-fx-data-shared-prod")
+        .option("materializationProject", "mozdata")
         .option("materializationDataset", "tmp")
+        .option("billingProject", "mozdata")
         .load()
     )
 

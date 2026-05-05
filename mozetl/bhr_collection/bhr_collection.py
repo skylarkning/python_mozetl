@@ -533,11 +533,11 @@ def get_data(sc, sql_context, config, date, end_date=None):
 
     sql = f"""
     SELECT
-      environment,
-      application,
-      payload,
+      client_info,
+      ping_info,
+      metrics,
     FROM
-      `moz-fx-data-shared-prod.telemetry_stable.bhr_v4`
+      `moz-fx-data-shared-prod.firefox_desktop_stable.hang_report_v1`
     WHERE
       -- Use document_id to sample
       ABS(MOD(FARM_FINGERPRINT(document_id), {max_sample_slices})) < {sample_slices}
@@ -557,20 +557,20 @@ def get_data(sc, sql_context, config, date, end_date=None):
 
     if config["exclude_modules"]:
         properties = [
-            "environment/system/os/name",
-            "environment/system/os/version",
-            "application/architecture",
-            "application/build_id",
-            "payload/hangs",
+            "client_info/os",
+            "client_info/os_version",
+            "client_info/architecture",
+            "client_info/app_build",
+            "metrics/object/hangs_reports",
         ]
     else:
         properties = [
-            "environment/system/os/name",
-            "environment/system/os/version",
-            "application/architecture",
-            "application/build_id",
-            "payload/modules",
-            "payload/hangs",
+            "client_info/os",
+            "client_info/os_version",
+            "client_info/architecture",
+            "client_info/app_build",
+            "metrics/object/hangs_modules",
+            "metrics/object/hangs_reports",
         ]
 
     print("%d results total" % pings_df.rdd.count())
@@ -580,8 +580,8 @@ def get_data(sc, sql_context, config, date, end_date=None):
 
     try:
         result = mapped.filter(
-            lambda p: p["application/build_id"][:8] >= date_str
-            and p["application/build_id"][:8] <= end_date_str
+            lambda p: p["client_info/app_build"][:8] >= date_str
+            and p["client_info/app_build"][:8] <= end_date_str
         )
         print("%d results after first filter" % result.count())
         return result
@@ -590,11 +590,13 @@ def get_data(sc, sql_context, config, date, end_date=None):
 
 
 def ping_is_valid(ping):
-    if not isinstance(ping["environment/system/os/version"], str):
+    if not isinstance(ping["client_info/os_version"], str):
         return False
-    if not isinstance(ping["environment/system/os/name"], str):
+    if not isinstance(ping["client_info/os"], str):
         return False
-    if not isinstance(ping["application/build_id"], str):
+    if not isinstance(ping["client_info/app_build"], str):
+        return False
+    if ping["metrics/object/hangs_reports"] is None:
         return False
 
     return True
@@ -616,15 +618,32 @@ def string_to_module(string_module):
 
 
 def process_frame(frame, modules):
+    # Glean format:
+    # {"frame": "...", "module": 0}
+    if isinstance(frame, dict):
+        module_index = frame.get("module")
+        offset = frame.get("frame")
+
+        if module_index is None:
+            return (("pseudo", None), offset)
+
+        if module_index < 0 or module_index >= len(modules):
+            return (None, offset)
+
+        debug_name, breakpad_id = modules[module_index]
+        return ((debug_name, breakpad_id), offset)
+
+    # Legacy telemetry format:
+    # [module_index, offset]
     if isinstance(frame, list):
         module_index, offset = frame
         if module_index is None or module_index < 0 or module_index >= len(modules):
             return (None, offset)
         debug_name, breakpad_id = modules[module_index]
         return ((debug_name, breakpad_id), offset)
-    else:
-        return (("pseudo", None), frame)
 
+    # Pseudo frame fallback.
+    return (("pseudo", None), frame)
 
 def filter_hang(hang, config):
     return (
@@ -635,18 +654,25 @@ def filter_hang(hang, config):
 
 
 def process_hang(hang):
-    result = hang.asDict()
-    result["stack"] = json.loads(hang["stack"])
-    return result
+    if hasattr(hang, "asDict"):
+        return hang.asDict(recursive=True)
+    return hang
 
 
 def process_hangs(ping, config):
-    build_date = ping["application/build_id"][:8]  # "YYYYMMDD" : 8 characters
+    build_date = ping["client_info/app_build"][:8]  # "YYYYMMDD" : 8 characters
 
-    platform = "{}".format(ping["environment/system/os/name"])
+    platform = "{}".format(ping["client_info/os"])
 
-    modules = ping["payload/modules"]
-    hangs = [process_hang(h) for h in ping["payload/hangs"]]
+    modules = ping["metrics/object/hangs_modules"]
+    if isinstance(modules, str):
+        modules = json.loads(modules)
+
+    raw_hangs = ping["metrics/object/hangs_reports"]
+    if isinstance(raw_hangs, str):
+        raw_hangs = json.loads(raw_hangs)
+
+    hangs = [process_hang(h) for h in raw_hangs]
     if hangs is None:
         return []
 
@@ -661,7 +687,7 @@ def process_hangs(ping, config):
             h["thread"],
             "",
             h["process"],
-            h["annotations"],
+            h.get("annotations") or [],
             build_date,
             platform,
         )
@@ -800,10 +826,9 @@ def process_hang_key(key, processed_modules):
 
 
 def process_hang_value(key, val, usage_hours_by_date):
-    stack, runnable_name, thread, build_date, annotations, platform = key
     return (
-        val[0] / usage_hours_by_date[build_date],
-        val[1] / usage_hours_by_date[build_date],
+        val[0],
+        val[1],
     )
 
 
@@ -894,8 +919,8 @@ def get_grouped_sums_and_counts(hangs, usage_hours_by_date, config):
 
 
 def get_usage_hours(ping):
-    build_date = ping["application/build_id"][:8]  # "YYYYMMDD" : 8 characters
-    usage_hours = float(ping["payload/time_since_last_ping"]) / 3600000.0
+    build_date = ping["client_info/app_build"][:8]  # "YYYYMMDD" : 8 characters
+    usage_hours = float(ping["payload/time_since_last_ping"]) / 3600000.0 # Note: This is not present in Glean!
     return (build_date, usage_hours)
 
 
@@ -1057,9 +1082,7 @@ def transform_pings(_, pings, config):
 
     hangs = symbolicate_hang_keys(hangs, processed_modules)
 
-    usage_hours_by_date = time_code(
-        "Getting usage hours", lambda: get_usage_hours_by_date(filtered)
-    )
+    usage_hours_by_date = {}
 
     result = time_code(
         "Grouping stacks",

@@ -562,7 +562,6 @@ def get_data(sc, sql_context, config, date, end_date=None):
             "application/architecture",
             "application/build_id",
             "payload/hangs",
-            "payload/time_since_last_ping",
         ]
     else:
         properties = [
@@ -572,7 +571,6 @@ def get_data(sc, sql_context, config, date, end_date=None):
             "application/build_id",
             "payload/modules",
             "payload/hangs",
-            "payload/time_since_last_ping",
         ]
 
     print("%d results total" % pings_df.rdd.count())
@@ -597,8 +595,6 @@ def ping_is_valid(ping):
     if not isinstance(ping["environment/system/os/name"], str):
         return False
     if not isinstance(ping["application/build_id"], str):
-        return False
-    if not isinstance(ping["payload/time_since_last_ping"], int):
         return False
 
     return True

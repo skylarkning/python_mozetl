@@ -551,7 +551,7 @@ def get_data(sc, sql_context, config, date, end_date=None):
         # sql results need to be saved to a table
         .option("materializationProject", "mozdata")
         .option("materializationDataset", "tmp")
-        .option("billingProject", "mozdata")
+        .option("billingProject", config["billing_project"])
         .load()
     )
 
@@ -1195,6 +1195,7 @@ default_config = {
     "exclude_modules": False,
     "uuid": uuid.uuid4().hex,
     "thread_filter": "Gecko",
+    "billing_project": "mozdata",
 }
 
 
@@ -1256,6 +1257,11 @@ def etl_job_daily(sc, sql_context, config=None):
 
 
 @click.command()
+@click.option(
+    "--billing-project",
+    default="mozdata",
+    help="GCP project to use for BigQuery billing.",
+)
 @click.option("--date", type=datetime.fromisoformat, required=True)
 @click.option(
     "--sample-size",
@@ -1280,7 +1286,15 @@ def etl_job_daily(sc, sql_context, config=None):
     help="If present, add to spark.jars config.  Used for local testing, "
     "e.g. --bq-connector-jar=spark-bigquery-latest.jar",
 )
-def start_job(date, sample_size, use_gcs, thread_filter, output_tag, bq_connector_jar):
+def start_job(
+    billing_project,
+    date,
+    sample_size,
+    use_gcs,
+    thread_filter,
+    output_tag,
+    bq_connector_jar,
+):
     print(f"Running for {date}")
     print(f"Using sample size {sample_size}")
 
@@ -1305,6 +1319,7 @@ def start_job(date, sample_size, use_gcs, thread_filter, output_tag, bq_connecto
             "hang_upper_bound": 65536,
             "sample_size": sample_size,
             "use_gcs": use_gcs,
+            "billing_project": billing_project,
         },
     )
 

@@ -647,10 +647,12 @@ def process_frame(frame, modules):
 
 
 def filter_hang(hang, config):
+    stack = hang.get("stack")
     return (
-        hang["thread"] == config["thread_filter"]
-        and len(hang["stack"]) > 0
-        and len(hang["stack"]) < 300
+        hang.get("thread") == config["thread_filter"]
+        and isinstance(stack, list)
+        and len(stack) > 0
+        and len(stack) < 300
     )
 
 
@@ -1243,6 +1245,12 @@ def etl_job_daily(sc, sql_context, config=None):
             print("No data")
             continue
         transformed, usage_hours = transform_pings(sc, data, final_config)
+
+        # Glean hang_report_v1 does not currently provide usage hours in the
+        # same shape as the legacy telemetry. Keep a dummy value for
+        # compatibility with the existing BHR output schema/UI.
+        usage_hours = {date_str: 1.0}
+
         profile_processor = ProfileProcessor(final_config)
         profile_processor.ingest(transformed, usage_hours)
         profile = profile_processor.process_into_profile()
